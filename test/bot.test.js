@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { Response } from 'node-fetch';
 import { Bot, nextMaxDate } from '../src/lib/bot.js';
 import { VisaHttpClient } from '../src/lib/client.js';
+import { parseWeekdays } from '../src/lib/config.js';
 
 const config = { scheduleId: '1', facilityId: '56', ascFacilityId: '60', countryCode: 'br' };
 const APPLIED = 'Consular Appointment: 10 November, 2026, 08:30 São Paulo - SP local time';
@@ -105,6 +106,46 @@ test('stops when the result cannot be verified', async (t) => {
   stubExit(t);
   const { bot } = makeBot({ appointment: new Error('socket hang up') });
   await assert.rejects(bot.bookAppointment({}, '2026-11-10', '2026-11-30'), /exit 1/);
+});
+
+test('parses weekday lists, "all" and unset mean any day', (t) => {
+  assert.deepEqual(parseWeekdays('mon,wed', 'X'), [1, 3]);
+  assert.deepEqual(parseWeekdays(' Mon , WED ', 'X'), [1, 3]);
+  assert.equal(parseWeekdays('all', 'X'), null);
+  assert.equal(parseWeekdays(' ALL ', 'X'), null);
+  assert.equal(parseWeekdays(undefined, 'X'), null);
+  stubExit(t);
+  assert.throws(() => parseWeekdays('seg', 'X'), /exit 1/);
+});
+
+test('only interview dates on allowed weekdays count', async () => {
+  // 2026-10-27 is a Tuesday, 2026-10-28 a Wednesday, 2026-11-02 a Monday
+  const { bot } = makeBot({ dates: ['2026-10-27', '2026-10-28', '2026-11-02'], overrides: { consulateWeekdays: [1, 3] } });
+  assert.equal(await bot.checkAvailableDate({}, '2027-03-04', undefined, '2026-11-30'), '2026-10-28');
+});
+
+test('without interview weekdays any day counts', async () => {
+  const { bot } = makeBot({ dates: ['2026-10-27'], overrides: { consulateWeekdays: null } });
+  assert.equal(await bot.checkAvailableDate({}, '2027-03-04', undefined, '2026-11-30'), '2026-10-27');
+});
+
+test('refuses to book an interview on a weekday that is not allowed', async () => {
+  const { bot, booked } = makeBot({ overrides: { consulateWeekdays: [1, 3] } });
+  assert.equal(await bot.bookAppointment({}, '2026-10-27', '2026-11-30'), false);
+  assert.equal(booked.length, 0);
+});
+
+test('picks the first ASC date on an allowed weekday', async () => {
+  // 2026-10-24 is a Saturday, 2026-10-26 a Monday
+  const { bot, booked } = makeBot({ ascDates: ['2026-10-24', '2026-10-26'], appointment: 'Consular Appointment: 28 October, 2026, 08:30', overrides: { ascWeekdays: [1, 2, 3, 4, 5] } });
+  assert.equal(await bot.bookAppointment({}, '2026-10-28', '2026-11-30'), true);
+  assert.equal(booked[0][5].date, '2026-10-26');
+});
+
+test('never books when no ASC date falls on an allowed weekday', async () => {
+  const { bot, booked } = makeBot({ ascDates: ['2026-10-24'], overrides: { ascWeekdays: [1, 2, 3, 4, 5] } });
+  assert.equal(await bot.bookAppointment({}, '2026-10-28', '2026-11-30'), false);
+  assert.equal(booked.length, 0);
 });
 
 const page = (html, session) => new Response(

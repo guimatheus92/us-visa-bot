@@ -1,5 +1,5 @@
 import { Bot, nextMaxDate } from '../lib/bot.js';
-import { getConfig } from '../lib/config.js';
+import { getConfig, WEEKDAYS } from '../lib/config.js';
 import { log, sleep, isSocketHangupError } from '../lib/utils.js';
 
 const COOLDOWN = 3600; // 1 hour in seconds
@@ -23,6 +23,11 @@ export async function botCommand(options) {
 
   if (maxDate) {
     log(`Max date: ${maxDate}`);
+  }
+
+  if (config.consulateWeekdays || config.ascWeekdays) {
+    const days = (weekdays) => (weekdays ? weekdays.map(d => WEEKDAYS[d]).join(', ') : 'all');
+    log(`Weekdays: interview ${days(config.consulateWeekdays)}; ASC ${days(config.ascWeekdays)}`);
   }
 
   if (options.dryRun) {
