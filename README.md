@@ -7,6 +7,7 @@ An automated bot that monitors and reschedules US visa interview appointments to
 - 🔄 Continuously monitors available appointment slots
 - 📅 Automatically books earlier dates when found  
 - 🎯 Configurable target, minimum and maximum date constraints
+- 🗓️ Allowed weekdays, separately for the interview and the ASC appointment
 - 🪪 Books the ASC (biometrics/CASV) appointment together with the interview
 - 👨‍👩‍👧 Supports group (family) schedules
 - 🧮 Protects limited reschedule attempts (max date + stop on unconfirmed booking)
@@ -49,6 +50,8 @@ SCHEDULE_ID=your_schedule_id
 FACILITY_ID=your_facility_id
 ASC_FACILITY_ID=your_asc_facility_id   # only in countries with an ASC appointment
 MAX_DATE=2026-11-30                    # optional
+CONSULATE_WEEKDAYS=mon,wed             # optional, defaults to all
+ASC_WEEKDAYS=all                       # optional, defaults to all
 REFRESH_DELAY=3
 ```
 
@@ -65,6 +68,8 @@ See [.env.example](.env.example) for a commented template.
 | `FACILITY_ID` | Your consulate facility ID | See [Finding Your Facility IDs](#finding-your-facility-ids) <br>Examples: Paris = `44`, Sao Paulo = `56` |
 | `ASC_FACILITY_ID` | Your ASC (biometrics, "CASV" in Brazil) facility ID | Optional. **Required in countries with a separate ASC appointment** (e.g. Brazil, Mexico, Colombia): without it the site drops your existing ASC appointment. See [Finding Your Facility IDs](#finding-your-facility-ids) |
 | `MAX_DATE` | Latest acceptable interview date (YYYY-MM-DD) | Optional. See [Limited reschedule attempts](#limited-reschedule-attempts). The `--max` flag overrides it |
+| `CONSULATE_WEEKDAYS` | Weekdays you can attend the interview | Optional. Comma-separated `mon,tue,wed,thu,fri,sat,sun` (case-insensitive), or `all`. Defaults to `all`. Example: `mon,wed` |
+| `ASC_WEEKDAYS` | Weekdays you can attend the ASC appointment | Optional, same format as `CONSULATE_WEEKDAYS`. Defaults to `all` |
 | `REFRESH_DELAY` | Seconds between checks | Optional, defaults to 3 seconds. Short delays get the account soft-banned sooner, see [Rate Limiting](#rate-limiting-soft-ban) |
 
 ### Finding Your Facility IDs
@@ -150,8 +155,9 @@ The bot will:
    - Must be earlier than current date (`-c`)
    - Must be after minimum date (`-m`) if specified
    - Must be before maximum date (`--max` / `MAX_DATE`) if specified
+   - Must fall on an allowed interview weekday (`CONSULATE_WEEKDAYS`) if specified
    - Will exit successfully if target date (`-t`) is reached
-4. **Find an ASC slot** for the chosen interview slot when `ASC_FACILITY_ID` is set (no ASC slot, no booking)
+4. **Find an ASC slot** for the chosen interview slot when `ASC_FACILITY_ID` is set: the first one on an allowed weekday (`ASC_WEEKDAYS`). No ASC slot, no booking; the bot tries again on the next check
 5. **Book** the appointment the same way the site does: confirm the scheduling limit warning, select every applicant of a group schedule, then submit
 6. **Continue** monitoring until target is reached or manually stopped
 

@@ -1,9 +1,13 @@
 import { VisaHttpClient } from './client.js';
+import { WEEKDAYS } from './config.js';
 import { log } from './utils.js';
 
 // Based on https://github.com/jeangnc/us-visa-bot/issues/51: a hard ceiling so limited
 // reschedule attempts are never spent on dates that are only slightly earlier
 const toTs = (d) => Date.parse(d + 'T00:00:00Z');
+const weekday = (d) => new Date(toTs(d)).getUTCDay();
+// null means any day
+const isAllowedDay = (d, weekdays) => !weekdays || weekdays.includes(weekday(d));
 
 // The group page shows dates like "4 March, 2027"
 const siteDate = (d) => {
@@ -63,6 +67,11 @@ export class Bot {
         return false;
       }
 
+      if (!isAllowedDay(date, this.config.consulateWeekdays)) {
+        log(`date ${date} is a ${WEEKDAYS[weekday(date)]}, not an allowed interview weekday`);
+        return false;
+      }
+
       return true;
     });
 
@@ -86,6 +95,11 @@ export class Bot {
     // Safety re-check before booking
     if (maxDate && toTs(date) > toTs(maxDate)) {
       log(`Refusing to book ${date} because it is after max date (${maxDate})`);
+      return false;
+    }
+
+    if (!isAllowedDay(date, this.config.consulateWeekdays)) {
+      log(`Refusing to book ${date} because ${WEEKDAYS[weekday(date)]} is not an allowed interview weekday`);
       return false;
     }
 
@@ -144,7 +158,7 @@ export class Bot {
 
   // The ASC slot must be booked together, otherwise the site drops the existing ASC appointment
   async findAscSlot(sessionHeaders, date, time) {
-    const { scheduleId, facilityId, ascFacilityId } = this.config;
+    const { scheduleId, facilityId, ascFacilityId, ascWeekdays } = this.config;
     const query = `&consulate_id=${facilityId}&consulate_date=${date}&consulate_time=${time}`;
     const ascDates = await this.client.checkAvailableDate(sessionHeaders, scheduleId, ascFacilityId, query);
 
@@ -153,13 +167,20 @@ export class Bot {
       return null;
     }
 
-    const ascTime = await this.client.checkAvailableTime(sessionHeaders, scheduleId, ascFacilityId, ascDates[0], query);
+    const ascDate = ascDates.find(d => isAllowedDay(d, ascWeekdays));
 
-    if (!ascTime) {
-      log(`no ASC time slots for ${ascDates[0]}`);
+    if (!ascDate) {
+      log(`no ASC dates on allowed weekdays (${ascWeekdays.map(d => WEEKDAYS[d]).join(', ')}) for consulate slot ${date} ${time}`);
       return null;
     }
 
-    return { facilityId: ascFacilityId, date: ascDates[0], time: ascTime };
+    const ascTime = await this.client.checkAvailableTime(sessionHeaders, scheduleId, ascFacilityId, ascDate, query);
+
+    if (!ascTime) {
+      log(`no ASC time slots for ${ascDate}`);
+      return null;
+    }
+
+    return { facilityId: ascFacilityId, date: ascDate, time: ascTime };
   }
 }
