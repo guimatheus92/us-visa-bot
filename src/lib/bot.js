@@ -5,6 +5,12 @@ import { log } from './utils.js';
 // reschedule attempts are never spent on dates that are only slightly earlier
 const toTs = (d) => Date.parse(d + 'T00:00:00Z');
 
+// The group page shows dates like "4 March, 2027"
+const siteDate = (d) => {
+  const t = new Date(toTs(d));
+  return `${t.getUTCDate()} ${t.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })}, ${t.getUTCFullYear()}`;
+};
+
 // Last day of the month before `date`: after booking in November, only October is worth another attempt
 export function nextMaxDate(date) {
   const d = new Date(toTs(date));
@@ -99,16 +105,41 @@ export class Bot {
     const summary = `${date} ${time}${asc ? ` + ASC ${asc.date} ${asc.time}` : ''}`;
     log(`booking ${summary}`);
 
-    const confirmed = await this.client.book(sessionHeaders, scheduleId, facilityId, date, time, asc, this.dryRun);
+    const attemptsBefore = this.dryRun ? null : await this.client.remainingAttempts(sessionHeaders, scheduleId);
+    const submitted = await this.client.book(sessionHeaders, scheduleId, facilityId, date, time, asc, this.dryRun);
 
-    if (!confirmed) {
-      // Unknown state: never retry on our own, a second POST could burn another limited attempt
-      log(`booking NOT confirmed for ${summary}. Check the site manually before restarting.`);
+    if (!submitted) {
+      return false;
+    }
+
+    if (this.dryRun) {
+      log(`[DRY RUN] booked ${summary}`);
+      return true;
+    }
+
+    // Confirm against what the site actually shows; stop whenever the outcome is unclear
+    let appointment, attemptsAfter;
+    try {
+      appointment = await this.client.currentAppointment(sessionHeaders, scheduleId);
+      attemptsAfter = await this.client.remainingAttempts(sessionHeaders, scheduleId);
+    } catch (err) {
+      log(`could not verify booking ${summary} (${err.message}). Check the site manually before restarting.`);
       process.exit(1);
     }
 
-    log(`${this.dryRun ? '[DRY RUN] ' : ''}booked ${summary}`);
-    return true;
+    if (new RegExp(`\\b${siteDate(date)}`).test(appointment)) {
+      log(`booked ${summary} (attempts left: ${attemptsAfter ?? 'n/a'})`);
+      return true;
+    }
+
+    // Only keep looking when nothing changed and the attempt counter proves no attempt was spent
+    if (!appointment || attemptsBefore === null || attemptsAfter !== attemptsBefore) {
+      log(`booking NOT confirmed for ${summary}: site shows "${appointment}", attempts left ${attemptsBefore} -> ${attemptsAfter}. Check the site manually before restarting.`);
+      process.exit(1);
+    }
+
+    log(`booking ${summary} was not applied (slot probably taken): site still shows "${appointment}", attempts left ${attemptsAfter}. Keep looking.`);
+    return false;
   }
 
   // The ASC slot must be booked together, otherwise the site drops the existing ASC appointment

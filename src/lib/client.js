@@ -1,5 +1,6 @@
 import fetch from "node-fetch";
 import cheerio from 'cheerio';
+import { writeFile } from 'node:fs/promises';
 import { log } from './utils.js';
 import { getBaseUri } from './config.js';
 
@@ -55,7 +56,27 @@ export class VisaHttpClient {
       .then(data => data['business_times'][0] || data['available_times'][0]);
   }
 
-  // Returns true only when the site confirms the booking
+  // "You have N remaining attempt(s)" from the scheduling limit warning; null when the account has no limit
+  async remainingAttempts(headers, scheduleId) {
+    const { $ } = await this._anonymousRequest(`${this.baseUri}/schedule/${scheduleId}/appointment`, headers)
+      .then(response => this._loadPage(response));
+    const match = $('body').text().match(/You have (\d+) remaining attempt/);
+    return match ? Number(match[1]) : null;
+  }
+
+  // e.g. "Consular Appointment: 4 March, 2027, 07:30 ..." as shown on the group page
+  async currentAppointment(headers, scheduleId) {
+    const actions = await this._anonymousRequest(`${this.baseUri}/schedule/${scheduleId}/continue_actions`, headers)
+      .then(response => this._loadPage(response));
+    const groupHref = actions.$('a[href*="/groups/"]').attr('href');
+    if (!groupHref) return '';
+
+    const { $ } = await this._anonymousRequest(new URL(groupHref, this.baseUri).href, actions.headers)
+      .then(response => this._loadPage(response));
+    return $('.consular-appt').first().text().replace(/\s+/g, ' ').trim();
+  }
+
+  // Returns true when the form was submitted (or would be, in dry-run); confirmation is up to the caller
   async book(headers, scheduleId, facilityId, date, time, asc = null, dryRun = false) {
     const url = `${this.baseUri}/schedule/${scheduleId}/appointment`;
 
@@ -81,9 +102,9 @@ export class VisaHttpClient {
       return false;
     }
 
+    // Mirror the form exactly: its own token and the submit button value
     const bookingData = {
-      'utf8': '✓',
-      'authenticity_token': page.headers['X-CSRF-Token'],
+      'authenticity_token': page.$('#appointment-form input[name="authenticity_token"]').val() || page.headers['X-CSRF-Token'],
       'confirmed_limit_message': '1',
       'use_consulate_appointment_capacity': 'true',
       'appointments[consulate_appointment][facility_id]': facilityId,
@@ -91,7 +112,8 @@ export class VisaHttpClient {
       'appointments[consulate_appointment][time]': time,
       'appointments[asc_appointment][facility_id]': asc?.facilityId ?? '',
       'appointments[asc_appointment][date]': asc?.date ?? '',
-      'appointments[asc_appointment][time]': asc?.time ?? ''
+      'appointments[asc_appointment][time]': asc?.time ?? '',
+      'commit': page.$('#appointments_submit').val() || 'Reschedule'
     };
 
     if (dryRun) {
@@ -101,9 +123,10 @@ export class VisaHttpClient {
     }
 
     const res = await this._submitFormWithRedirect(url, page.headers, bookingData);
-    const body = await res.text();
-    log(`booking response: ${res.status} ${res.url}`);
-    return /successfully scheduled/i.test(body);
+    // The site's response is the only record of why a booking was not applied
+    await writeFile('last-booking-response.html', await res.text());
+    log(`booking response: ${res.status} ${res.url} (saved to last-booking-response.html)`);
+    return true;
   }
 
   // Private request methods
