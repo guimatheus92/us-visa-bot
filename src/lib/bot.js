@@ -1,6 +1,16 @@
 import { VisaHttpClient } from './client.js';
 import { log } from './utils.js';
 
+// Based on https://github.com/jeangnc/us-visa-bot/issues/51: a hard ceiling so limited
+// reschedule attempts are never spent on dates that are only slightly earlier
+const toTs = (d) => Date.parse(d + 'T00:00:00Z');
+
+// Last day of the month before `date`: after booking in November, only October is worth another attempt
+export function nextMaxDate(date) {
+  const d = new Date(toTs(date));
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0)).toISOString().slice(0, 10);
+}
+
 export class Bot {
   constructor(config, options = {}) {
     this.config = config;
@@ -13,7 +23,7 @@ export class Bot {
     return await this.client.login();
   }
 
-  async checkAvailableDate(sessionHeaders, currentBookedDate, minDate) {
+  async checkAvailableDate(sessionHeaders, currentBookedDate, minDate, maxDate) {
     const dates = await this.client.checkAvailableDate(
       sessionHeaders,
       this.config.scheduleId,
@@ -25,14 +35,24 @@ export class Bot {
       return null;
     }
 
-    // Filter dates that are better than current booked date and after minimum date
+    const currentTs = toTs(currentBookedDate);
+    const maxTs = maxDate ? toTs(maxDate) : null;
+    const minTs = minDate ? toTs(minDate) : null;
+
     const goodDates = dates.filter(date => {
-      if (date >= currentBookedDate) {
+      const dateTs = toTs(date);
+
+      if (dateTs >= currentTs) {
         log(`date ${date} is further than already booked (${currentBookedDate})`);
         return false;
       }
 
-      if (minDate && date < minDate) {
+      if (maxTs && dateTs > maxTs) {
+        log(`date ${date} is after max date (${maxDate})`);
+        return false;
+      }
+
+      if (minTs && dateTs < minTs) {
         log(`date ${date} is before minimum date (${minDate})`);
         return false;
       }
@@ -48,39 +68,67 @@ export class Bot {
     // Sort dates and return the earliest one
     goodDates.sort();
     const earliestDate = goodDates[0];
-    
+
     log(`found ${goodDates.length} good dates: ${goodDates.join(', ')}, using earliest: ${earliestDate}`);
     return earliestDate;
   }
 
-  async bookAppointment(sessionHeaders, date) {
-    const time = await this.client.checkAvailableTime(
-      sessionHeaders,
-      this.config.scheduleId,
-      this.config.facilityId,
-      date
-    );
+  // Returns false when nothing was submitted; exits when a submitted booking isn't confirmed
+  async bookAppointment(sessionHeaders, date, maxDate) {
+    const { scheduleId, facilityId, ascFacilityId } = this.config;
+
+    // Safety re-check before booking
+    if (maxDate && toTs(date) > toTs(maxDate)) {
+      log(`Refusing to book ${date} because it is after max date (${maxDate})`);
+      return false;
+    }
+
+    const time = await this.client.checkAvailableTime(sessionHeaders, scheduleId, facilityId, date);
 
     if (!time) {
       log(`no available time slots for date ${date}`);
       return false;
     }
 
-    if (this.dryRun) {
-      log(`[DRY RUN] Would book appointment at ${date} ${time} (not actually booking)`);
-      return true;
+    const asc = ascFacilityId ? await this.findAscSlot(sessionHeaders, date, time) : null;
+
+    if (ascFacilityId && !asc) {
+      return false;
     }
 
-    await this.client.book(
-      sessionHeaders,
-      this.config.scheduleId,
-      this.config.facilityId,
-      date,
-      time
-    );
+    const summary = `${date} ${time}${asc ? ` + ASC ${asc.date} ${asc.time}` : ''}`;
+    log(`booking ${summary}`);
 
-    log(`booked time at ${date} ${time}`);
+    const confirmed = await this.client.book(sessionHeaders, scheduleId, facilityId, date, time, asc, this.dryRun);
+
+    if (!confirmed) {
+      // Unknown state: never retry on our own, a second POST could burn another limited attempt
+      log(`booking NOT confirmed for ${summary}. Check the site manually before restarting.`);
+      process.exit(1);
+    }
+
+    log(`${this.dryRun ? '[DRY RUN] ' : ''}booked ${summary}`);
     return true;
   }
 
+  // The ASC slot must be booked together, otherwise the site drops the existing ASC appointment
+  async findAscSlot(sessionHeaders, date, time) {
+    const { scheduleId, facilityId, ascFacilityId } = this.config;
+    const query = `&consulate_id=${facilityId}&consulate_date=${date}&consulate_time=${time}`;
+    const ascDates = await this.client.checkAvailableDate(sessionHeaders, scheduleId, ascFacilityId, query);
+
+    if (!ascDates || ascDates.length === 0) {
+      log(`no ASC dates available for consulate slot ${date} ${time}`);
+      return null;
+    }
+
+    const ascTime = await this.client.checkAvailableTime(sessionHeaders, scheduleId, ascFacilityId, ascDates[0], query);
+
+    if (!ascTime) {
+      log(`no ASC time slots for ${ascDates[0]}`);
+      return null;
+    }
+
+    return { facilityId: ascFacilityId, date: ascDates[0], time: ascTime };
+  }
 }
