@@ -65,7 +65,7 @@ See [.env.example](.env.example) for a commented template.
 | `FACILITY_ID` | Your consulate facility ID | See [Finding Your Facility IDs](#finding-your-facility-ids) <br>Examples: Paris = `44`, Sao Paulo = `56` |
 | `ASC_FACILITY_ID` | Your ASC (biometrics, "CASV" in Brazil) facility ID | Optional. **Required in countries with a separate ASC appointment** (e.g. Brazil, Mexico, Colombia): without it the site drops your existing ASC appointment. See [Finding Your Facility IDs](#finding-your-facility-ids) |
 | `MAX_DATE` | Latest acceptable interview date (YYYY-MM-DD) | Optional. See [Limited reschedule attempts](#limited-reschedule-attempts). The `--max` flag overrides it |
-| `REFRESH_DELAY` | Seconds between checks | Optional, defaults to 3 seconds. Very short delays risk getting the account temporarily locked; 30+ is safer |
+| `REFRESH_DELAY` | Seconds between checks | Optional, defaults to 3 seconds. Short delays get the account soft-banned sooner, see [Rate Limiting](#rate-limiting-soft-ban) |
 
 ### Finding Your Facility IDs
 
@@ -128,6 +128,18 @@ With a max date (`MAX_DATE` or `--max`):
 - After each booking, the max date steps down to **the end of the previous month**, so another attempt is only spent to gain at least a whole month. Example: with `--max 2026-11-30`, booking Nov 20 makes only October count; booking in October makes September the limit, which is already in the past, so the bot stops.
 - The bot stops when the max date has passed, because nothing else can be found.
 - If the site does not confirm a submitted booking, the bot stops instead of retrying, so an unknown state never costs a second attempt. Check the site before restarting.
+
+## Rate Limiting (Soft Ban)
+
+The site has no published rate limit, but too many requests or logins in a short time get the account temporarily throttled ("soft ban"):
+
+- **Symptom:** the date list comes back empty (`no dates available`) even though dates existed minutes before. In the browser, the reschedule page shows a red message saying there are no appointments at the selected location *or the system is busy* (in Portuguese: "Não há agendamentos disponíveis no local selecionado ou o sistema está ocupado"). The account itself is not locked, and you can still log in.
+- **Cause:** every run of the bot (including `--dry-run`) and every debugging script logs in again, and manual page refreshes also count. In our case, about 8 logins within 10 minutes (several dry runs and debugging scripts) triggered it right away. Polling alone also adds up: community reports mention empty lists after ~48 requests, or after ~3 hours of polling every 60 seconds.
+- **Duration:** there is no official policy. Community reports consistently mention **about 5 hours**. Some tools simply sleep 5 hours when the list is empty, others retry after 1 hour.
+- **What to do:** stop the bot (Ctrl+C), do not keep refreshing the site, open the reschedule page once after a few hours, and restart the bot only when dates show up again. Polling through the ban returns nothing and may extend it.
+- **Prevention:** do not run several dry runs, restarts or debugging scripts back to back; test once and leave it running. Prefer a longer `REFRESH_DELAY`: a steady, slower poll over the whole day catches more cancellations than a fast burst followed by hours of soft ban.
+
+Sources (community reports, not official): [gist comments on ban length and intervals](https://gist.github.com/Svision/04202d93fb32d14f00ac746879820722), [uxDaniel/visa_rescheduler#76](https://github.com/uxDaniel/visa_rescheduler/issues/76), [zangjiucheng/us_visa_scheduler](https://github.com/zangjiucheng/us_visa_scheduler).
 
 ## How It Behaves
 
