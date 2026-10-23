@@ -26,6 +26,8 @@ export class Bot {
     this.config = config;
     this.dryRun = options.dryRun || false;
     this.client = new VisaHttpClient(this.config.countryCode, this.config.email, this.config.password);
+    // Consecutive empty date lists: the site's usual sign of rate limiting
+    this.emptyStreak = 0;
   }
 
   async initialize() {
@@ -41,10 +43,12 @@ export class Bot {
     );
 
     if (!dates || dates.length === 0) {
-      log("no dates available");
+      this.emptyStreak += 1;
+      log(`no dates available (${this.emptyStreak} in a row)`);
       return null;
     }
 
+    this.emptyStreak = 0;
     const currentTs = toTs(currentBookedDate);
     const maxTs = maxDate ? toTs(maxDate) : null;
     const minTs = minDate ? toTs(minDate) : null;
