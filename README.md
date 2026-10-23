@@ -124,6 +124,22 @@ npm start -- -c 2023-06-15 --dry-run
 npm start -- --help
 ```
 
+### Saving the Log
+
+The bot only prints to the terminal. To keep the whole run (useful to see, for example, when the site started rate limiting), also write it to `bot.log`:
+
+```powershell
+# Windows PowerShell
+npm start -- -c 2023-06-15 | Tee-Object -FilePath bot.log -Append
+```
+
+```bash
+# macOS / Linux
+npm start -- -c 2023-06-15 | tee -a bot.log
+```
+
+`bot.log` is gitignored because it contains your schedule and applicant IDs.
+
 ## Limited Reschedule Attempts
 
 Some countries limit how many times you can reschedule (e.g. Brazil and Canada allow 3). Without constraints the bot would spend an attempt on any earlier date, even one only a day earlier.
@@ -139,9 +155,10 @@ With a max date (`MAX_DATE` or `--max`):
 The site has no published rate limit, but too many requests or logins in a short time get the account temporarily throttled ("soft ban"):
 
 - **Symptom:** the date list comes back empty (`no dates available`) even though dates existed minutes before. In the browser, the reschedule page shows a red message saying there are no appointments at the selected location *or the system is busy* (in Portuguese: "Não há agendamentos disponíveis no local selecionado ou o sistema está ocupado"). The account itself is not locked, and you can still log in.
-- **Cause:** every run of the bot (including `--dry-run`) and every debugging script logs in again, and manual page refreshes also count. In our case, about 8 logins within 10 minutes (several dry runs and debugging scripts) triggered it right away. Polling alone also adds up: community reports mention empty lists after ~48 requests, or after ~3 hours of polling every 60 seconds.
+- **Cause:** every run of the bot (including `--dry-run`) and every debugging script logs in again, and manual page refreshes also count. In our case, about 8 logins within 10 minutes (several dry runs and debugging scripts) triggered it right away. Polling alone also adds up: community reports mention empty lists after ~48 requests, or after ~3 hours of polling every 60 seconds. In one of our runs at a ~30 second interval, the site started resetting connections (`ECONNRESET`) after about 2 hours of polling, and after the third reset the date list came back empty.
 - **Duration:** there is no official policy. Community reports consistently mention **about 5 hours**. Some tools simply sleep 5 hours when the list is empty, others retry after 1 hour.
-- **What to do:** stop the bot (Ctrl+C), do not keep refreshing the site, open the reschedule page once after a few hours, and restart the bot only when dates show up again. Polling through the ban returns nothing and may extend it.
+- **What the bot does:** after a connection reset, or after 3 empty date lists in a row, it pauses for 1 hour and then logs in again, instead of polling through the ban (which returns nothing and may extend it). The site's session also expires after about 1 hour; the bot logs in again on its own.
+- **What to do:** leave the bot running and let it pause. Do not keep refreshing the site or restarting the bot, since each restart is a new login.
 - **Prevention:** do not run several dry runs, restarts or debugging scripts back to back; test once and leave it running. Prefer a longer `REFRESH_DELAY`: a steady, slower poll over the whole day catches more cancellations than a fast burst followed by hours of soft ban.
 
 Sources (community reports, not official): [gist comments on ban length and intervals](https://gist.github.com/Svision/04202d93fb32d14f00ac746879820722), [uxDaniel/visa_rescheduler#76](https://github.com/uxDaniel/visa_rescheduler/issues/76), [zangjiucheng/us_visa_scheduler](https://github.com/zangjiucheng/us_visa_scheduler).
@@ -185,7 +202,7 @@ The bot will:
 - ✅ **Keeps your ASC appointment** - Never submits without an ASC slot when `ASC_FACILITY_ID` is set
 - ✅ **Verified bookings** - Stops if the site does not confirm a booking, instead of retrying blindly
 - ✅ **Graceful exit** - Stops automatically when target is reached
-- ✅ **Error recovery** - Automatically retries on network errors
+- ✅ **Error recovery** - Pauses 1 hour after connection resets or repeated empty date lists, then logs in again
 - ✅ **Secure credentials** - Uses environment variables for sensitive data
 
 ## Testing

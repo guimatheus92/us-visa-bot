@@ -3,6 +3,7 @@ import { getConfig, WEEKDAYS } from '../lib/config.js';
 import { log, sleep, isSocketHangupError } from '../lib/utils.js';
 
 const COOLDOWN = 3600; // 1 hour in seconds
+const EMPTY_LIST_LIMIT = 3; // consecutive empty date lists before pausing like a connection reset
 
 export async function botCommand(options) {
   const config = getConfig();
@@ -57,6 +58,13 @@ export async function botCommand(options) {
         minDate,
         maxDate
       );
+
+      // Polling through a rate limit only extends it; pause, then log in again
+      if (bot.emptyStreak >= EMPTY_LIST_LIMIT) {
+        log(`${bot.emptyStreak} empty date lists in a row, probably rate limited. Trying again after ${COOLDOWN} seconds...`);
+        await sleep(COOLDOWN);
+        return botCommand(options);
+      }
 
       if (availableDate) {
         const booked = await bot.bookAppointment(sessionHeaders, availableDate, maxDate);

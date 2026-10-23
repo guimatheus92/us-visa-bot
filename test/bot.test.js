@@ -108,6 +108,19 @@ test('stops when the result cannot be verified', async (t) => {
   await assert.rejects(bot.bookAppointment({}, '2026-11-10', '2026-11-30'), /exit 1/);
 });
 
+test('counts consecutive empty date lists and resets when dates come back', async () => {
+  const lists = [[], [], ['2027-03-10']];
+  const { bot } = makeBot();
+  bot.client.checkAvailableDate = async () => lists.shift();
+
+  await bot.checkAvailableDate({}, '2027-03-04');
+  await bot.checkAvailableDate({}, '2027-03-04');
+  assert.equal(bot.emptyStreak, 2);
+
+  await bot.checkAvailableDate({}, '2027-03-04');
+  assert.equal(bot.emptyStreak, 0);
+});
+
 test('parses weekday lists, "all" and unset mean any day', (t) => {
   assert.deepEqual(parseWeekdays('mon,wed', 'X'), [1, 3]);
   assert.deepEqual(parseWeekdays(' Mon , WED ', 'X'), [1, 3]);
