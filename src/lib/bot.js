@@ -8,6 +8,8 @@ const toTs = (d) => Date.parse(d + 'T00:00:00Z');
 const weekday = (d) => new Date(toTs(d)).getUTCDay();
 // null means any day
 const isAllowedDay = (d, weekdays) => !weekdays || weekdays.includes(weekday(d));
+// Interview dates tried per check when the earlier ones have no slot (each costs a few requests)
+const MAX_CANDIDATES = 3;
 
 // The group page shows dates like "4 March, 2027"
 const siteDate = (d) => {
@@ -35,7 +37,8 @@ export class Bot {
     return await this.client.login();
   }
 
-  async checkAvailableDate(sessionHeaders, currentBookedDate, minDate, maxDate) {
+  // Interview dates that satisfy every constraint, earliest first
+  async checkAvailableDates(sessionHeaders, currentBookedDate, minDate, maxDate) {
     const dates = await this.client.checkAvailableDate(
       sessionHeaders,
       this.config.scheduleId,
@@ -45,7 +48,7 @@ export class Bot {
     if (!dates || dates.length === 0) {
       this.emptyStreak += 1;
       log(`no dates available (${this.emptyStreak} in a row)`);
-      return null;
+      return [];
     }
 
     this.emptyStreak = 0;
@@ -81,43 +84,62 @@ export class Bot {
 
     if (goodDates.length === 0) {
       log("no good dates found after filtering");
-      return null;
+      return [];
     }
 
-    // Sort dates and return the earliest one
     goodDates.sort();
-    const earliestDate = goodDates[0];
-
-    log(`found ${goodDates.length} good dates: ${goodDates.join(', ')}, using earliest: ${earliestDate}`);
-    return earliestDate;
+    log(`found ${goodDates.length} good dates: ${goodDates.join(', ')}`);
+    return goodDates;
   }
 
-  // Returns false when nothing was submitted; exits when a submitted booking isn't confirmed
+  // Books the earliest date that has a slot. Moves on to the next date only when nothing was
+  // submitted for one (no interview time or no ASC slot), so a check never submits twice.
+  // Returns the booked date, or null.
+  async bookEarliest(sessionHeaders, dates, maxDate) {
+    const candidates = dates.slice(0, MAX_CANDIDATES);
+
+    for (const [i, date] of candidates.entries()) {
+      const result = await this.bookAppointment(sessionHeaders, date, maxDate);
+
+      if (result !== null) {
+        return result ? date : null;
+      }
+
+      if (i < candidates.length - 1) {
+        log(`${date} cannot be booked right now, trying ${candidates[i + 1]}`);
+      }
+    }
+
+    return null;
+  }
+
+  // true: booked. null: this date cannot be booked now, another date may work.
+  // false: stop for this check. Exits when a submitted booking isn't confirmed.
   async bookAppointment(sessionHeaders, date, maxDate) {
     const { scheduleId, facilityId, ascFacilityId } = this.config;
 
     // Safety re-check before booking
     if (maxDate && toTs(date) > toTs(maxDate)) {
       log(`Refusing to book ${date} because it is after max date (${maxDate})`);
-      return false;
+      return null;
     }
 
     if (!isAllowedDay(date, this.config.consulateWeekdays)) {
       log(`Refusing to book ${date} because ${WEEKDAYS[weekday(date)]} is not an allowed interview weekday`);
-      return false;
+      return null;
     }
 
     const time = await this.client.checkAvailableTime(sessionHeaders, scheduleId, facilityId, date);
 
     if (!time) {
       log(`no available time slots for date ${date}`);
-      return false;
+      return null;
     }
 
     const asc = ascFacilityId ? await this.findAscSlot(sessionHeaders, date, time) : null;
 
     if (ascFacilityId && !asc) {
-      return false;
+      return null;
     }
 
     const summary = `${date} ${time}${asc ? ` + ASC ${asc.date} ${asc.time}` : ''}`;
