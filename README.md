@@ -174,7 +174,7 @@ The bot will:
    - Must be before maximum date (`--max` / `MAX_DATE`) if specified
    - Must fall on an allowed interview weekday (`CONSULATE_WEEKDAYS`) if specified
    - Will exit successfully if target date (`-t`) is reached
-4. **Find an ASC slot** for the chosen interview slot when `ASC_FACILITY_ID` is set: the first one on an allowed weekday (`ASC_WEEKDAYS`). No ASC slot, no booking; the bot tries again on the next check
+4. **Find an ASC slot** for the earliest interview slot when `ASC_FACILITY_ID` is set: the first one on an allowed weekday (`ASC_WEEKDAYS`). The ASC calendar depends on the interview slot, so it cannot be searched on its own. No ASC slot, no booking: the bot tries the next interview date (up to 3 per check), and otherwise tries again on the next check. At most one booking is submitted per check
 5. **Book** the appointment the same way the site does: confirm the scheduling limit warning, select every applicant of a group schedule, then submit
 6. **Continue** monitoring until target is reached or manually stopped
 
@@ -187,7 +187,7 @@ The bot will:
 [2023-07-16T10:30:01.000Z] Logging in
 [2023-07-16T10:30:03.000Z] date 2023-09-01 is further than already booked (2023-08-15)
 [2023-07-16T10:30:03.000Z] no good dates found after filtering
-[2023-07-16T10:30:06.000Z] found 1 good dates: 2023-07-15, using earliest: 2023-07-15
+[2023-07-16T10:30:06.000Z] found 1 good dates: 2023-07-15
 [2023-07-16T10:30:06.000Z] booking 2023-07-15 09:00 + ASC 2023-07-10 08:30
 [2023-07-16T10:30:07.000Z] group schedule, selecting applicants: 111, 222
 [2023-07-16T10:30:08.000Z] booked 2023-07-15 09:00 + ASC 2023-07-10 08:30

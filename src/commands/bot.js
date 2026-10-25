@@ -52,7 +52,7 @@ export async function botCommand(options) {
         process.exit(0);
       }
 
-      const availableDate = await bot.checkAvailableDate(
+      const availableDates = await bot.checkAvailableDates(
         sessionHeaders,
         currentBookedDate,
         minDate,
@@ -66,16 +66,16 @@ export async function botCommand(options) {
         return botCommand(options);
       }
 
-      if (availableDate) {
-        const booked = await bot.bookAppointment(sessionHeaders, availableDate, maxDate);
+      if (availableDates.length > 0) {
+        const bookedDate = await bot.bookEarliest(sessionHeaders, availableDates, maxDate);
 
-        if (booked) {
+        if (bookedDate) {
           // Update current date; with a max date, only a whole month earlier is worth another attempt
-          currentBookedDate = availableDate;
+          currentBookedDate = bookedDate;
 
           if (maxDate) {
-            maxDate = nextMaxDate(availableDate);
-            log(`Rescheduled to ${availableDate}. From now on only dates up to ${maxDate} count.`);
+            maxDate = nextMaxDate(bookedDate);
+            log(`Rescheduled to ${bookedDate}. From now on only dates up to ${maxDate} count.`);
           }
 
           options = {
@@ -84,8 +84,8 @@ export async function botCommand(options) {
             max: maxDate
           };
 
-          if (targetDate && availableDate <= targetDate) {
-            log(`Target date reached! Successfully booked appointment on ${availableDate}`);
+          if (targetDate && bookedDate <= targetDate) {
+            log(`Target date reached! Successfully booked appointment on ${bookedDate}`);
             process.exit(0);
           }
         }

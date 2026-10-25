@@ -35,19 +35,19 @@ test('ceiling steps down to the end of the previous month', () => {
   assert.equal(nextMaxDate('2027-01-15'), '2026-12-31');
 });
 
-test('picks the earliest date that is before current and within the ceiling', async () => {
+test('lists dates before current and within the ceiling, earliest first', async () => {
   const { bot } = makeBot({ dates: ['2027-01-05', '2026-11-10', '2026-10-29', '2027-03-10'] });
-  assert.equal(await bot.checkAvailableDate({}, '2027-03-04', undefined, '2026-11-30'), '2026-10-29');
+  assert.deepEqual(await bot.checkAvailableDates({}, '2027-03-04', undefined, '2026-11-30'), ['2026-10-29', '2026-11-10']);
 });
 
 test('ignores dates after the ceiling (January when only Oct/Nov count)', async () => {
   const { bot } = makeBot({ dates: ['2026-12-01', '2027-01-05'] });
-  assert.equal(await bot.checkAvailableDate({}, '2027-03-04', undefined, '2026-11-30'), null);
+  assert.deepEqual(await bot.checkAvailableDates({}, '2027-03-04', undefined, '2026-11-30'), []);
 });
 
 test('without a max date any earlier date counts', async () => {
   const { bot } = makeBot({ dates: ['2027-03-01'] });
-  assert.equal(await bot.checkAvailableDate({}, '2027-03-04', undefined, undefined), '2027-03-01');
+  assert.deepEqual(await bot.checkAvailableDates({}, '2027-03-04', undefined, undefined), ['2027-03-01']);
 });
 
 test('without ASC_FACILITY_ID books the consulate only', async () => {
@@ -58,18 +58,18 @@ test('without ASC_FACILITY_ID books the consulate only', async () => {
 
 test('after booking November, another November date is ignored', async () => {
   const { bot } = makeBot({ dates: ['2026-11-05'] });
-  assert.equal(await bot.checkAvailableDate({}, '2026-11-20', undefined, nextMaxDate('2026-11-20')), null);
+  assert.deepEqual(await bot.checkAvailableDates({}, '2026-11-20', undefined, nextMaxDate('2026-11-20')), []);
 });
 
 test('refuses to book after the ceiling', async () => {
   const { bot, booked } = makeBot();
-  assert.equal(await bot.bookAppointment({}, '2026-12-15', '2026-11-30'), false);
+  assert.equal(await bot.bookAppointment({}, '2026-12-15', '2026-11-30'), null);
   assert.equal(booked.length, 0);
 });
 
 test('never books without an ASC (CASV) slot', async () => {
   const { bot, booked } = makeBot({ ascDates: [] });
-  assert.equal(await bot.bookAppointment({}, '2026-11-10', '2026-11-30'), false);
+  assert.equal(await bot.bookAppointment({}, '2026-11-10', '2026-11-30'), null);
   assert.equal(booked.length, 0);
 });
 
@@ -113,11 +113,11 @@ test('counts consecutive empty date lists and resets when dates come back', asyn
   const { bot } = makeBot();
   bot.client.checkAvailableDate = async () => lists.shift();
 
-  await bot.checkAvailableDate({}, '2027-03-04');
-  await bot.checkAvailableDate({}, '2027-03-04');
+  await bot.checkAvailableDates({}, '2027-03-04');
+  await bot.checkAvailableDates({}, '2027-03-04');
   assert.equal(bot.emptyStreak, 2);
 
-  await bot.checkAvailableDate({}, '2027-03-04');
+  await bot.checkAvailableDates({}, '2027-03-04');
   assert.equal(bot.emptyStreak, 0);
 });
 
@@ -134,17 +134,17 @@ test('parses weekday lists, "all" and unset mean any day', (t) => {
 test('only interview dates on allowed weekdays count', async () => {
   // 2026-10-27 is a Tuesday, 2026-10-28 a Wednesday, 2026-11-02 a Monday
   const { bot } = makeBot({ dates: ['2026-10-27', '2026-10-28', '2026-11-02'], overrides: { consulateWeekdays: [1, 3] } });
-  assert.equal(await bot.checkAvailableDate({}, '2027-03-04', undefined, '2026-11-30'), '2026-10-28');
+  assert.deepEqual(await bot.checkAvailableDates({}, '2027-03-04', undefined, '2026-11-30'), ['2026-10-28', '2026-11-02']);
 });
 
 test('without interview weekdays any day counts', async () => {
   const { bot } = makeBot({ dates: ['2026-10-27'], overrides: { consulateWeekdays: null } });
-  assert.equal(await bot.checkAvailableDate({}, '2027-03-04', undefined, '2026-11-30'), '2026-10-27');
+  assert.deepEqual(await bot.checkAvailableDates({}, '2027-03-04', undefined, '2026-11-30'), ['2026-10-27']);
 });
 
 test('refuses to book an interview on a weekday that is not allowed', async () => {
   const { bot, booked } = makeBot({ overrides: { consulateWeekdays: [1, 3] } });
-  assert.equal(await bot.bookAppointment({}, '2026-10-27', '2026-11-30'), false);
+  assert.equal(await bot.bookAppointment({}, '2026-10-27', '2026-11-30'), null);
   assert.equal(booked.length, 0);
 });
 
@@ -157,7 +157,35 @@ test('picks the first ASC date on an allowed weekday', async () => {
 
 test('never books when no ASC date falls on an allowed weekday', async () => {
   const { bot, booked } = makeBot({ ascDates: ['2026-10-24'], overrides: { ascWeekdays: [1, 2, 3, 4, 5] } });
-  assert.equal(await bot.bookAppointment({}, '2026-10-28', '2026-11-30'), false);
+  assert.equal(await bot.bookAppointment({}, '2026-10-28', '2026-11-30'), null);
+  assert.equal(booked.length, 0);
+});
+
+// ASC dates depend on the interview slot: none for 2026-10-28, some for later interviews
+const ascByInterview = (none) => async (h, s, facilityId, query = '') =>
+  (facilityId === config.ascFacilityId ? (none.some(d => query.includes(d)) ? [] : ['2026-10-30']) : []);
+
+test('tries the next interview date when the earliest has no ASC slot', async () => {
+  const { bot, booked } = makeBot({ appointment: 'Consular Appointment: 2 November, 2026, 08:30' });
+  bot.client.checkAvailableDate = ascByInterview(['2026-10-28']);
+  assert.equal(await bot.bookEarliest({}, ['2026-10-28', '2026-11-02'], '2026-11-30'), '2026-11-02');
+  assert.equal(booked.length, 1);
+  assert.equal(booked[0][3], '2026-11-02');
+});
+
+test('never submits twice in one check: stops after a booking that was not applied', async () => {
+  const { bot, booked } = makeBot({ appointment: UNCHANGED, attempts: [3, 3] });
+  assert.equal(await bot.bookEarliest({}, ['2026-10-28', '2026-11-02'], '2026-11-30'), null);
+  assert.equal(booked.length, 1);
+});
+
+test('tries at most 3 interview dates per check', async () => {
+  const { bot, booked } = makeBot();
+  let timeLookups = 0;
+  bot.client.checkAvailableDate = ascByInterview(['2026-10-28', '2026-11-02', '2026-11-04', '2026-11-09']);
+  bot.client.checkAvailableTime = async () => { timeLookups++; return '08:30'; };
+  assert.equal(await bot.bookEarliest({}, ['2026-10-28', '2026-11-02', '2026-11-04', '2026-11-09'], '2026-11-30'), null);
+  assert.equal(timeLookups, 3);
   assert.equal(booked.length, 0);
 });
 
