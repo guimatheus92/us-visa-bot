@@ -203,8 +203,15 @@ export class VisaHttpClient {
   }
 
   _extractRelevantCookies(res) {
-    const parsedCookies = this._parseCookies(res.headers.get('set-cookie'));
-    return `_yatri_session=${parsedCookies['_yatri_session']}`;
+    const setCookie = res.headers.get('set-cookie');
+    const session = setCookie && this._parseCookies(setCookie)['_yatri_session'];
+
+    // The site answers like this when it is unavailable or blocking us
+    if (!session) {
+      throw new Error(`no session cookie in the response (status ${res.status})`);
+    }
+
+    return `_yatri_session=${session}`;
   }
 
   _parseCookies(cookies) {

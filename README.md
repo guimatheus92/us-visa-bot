@@ -171,7 +171,7 @@ Polling too fast makes the site reset connections (`ECONNRESET`). In our runs th
 
 ### What the bot does, and what to do
 
-- **What the bot does:** after a connection reset, or after 3 empty date lists in a row, it pauses for 1 hour and then logs in again. During the daily window, this means one short check per hour instead of polling all day. The site's session also expires after about 1 hour; the bot logs in again on its own.
+- **What the bot does:** after a connection reset, 3 empty date lists in a row, or 3 errors in a row (for example an error page instead of dates), it pauses for 1 hour and then logs in again. A single error waits the normal `REFRESH_DELAY` before logging in again, never immediately. During the daily window, this means one short check per hour instead of polling all day. The site's session also expires after about 1 hour; the bot logs in again on its own.
 - **What to do:** leave the bot running. It picks up again when dates come back. Avoid restarting it or refreshing the site repeatedly, since each restart is a new login.
 - **Interval:** a 60-second `REFRESH_DELAY` avoided most connection resets in our runs. Test once and leave it running, rather than doing several dry runs or restarts back to back.
 
@@ -214,7 +214,7 @@ The bot will:
 - ✅ **Keeps your ASC appointment** - Never submits without an ASC slot when `ASC_FACILITY_ID` is set
 - ✅ **Verified bookings** - Stops if the site does not confirm a booking, instead of retrying blindly
 - ✅ **Graceful exit** - Stops automatically when target is reached
-- ✅ **Error recovery** - Pauses 1 hour after connection resets or repeated empty date lists, then logs in again
+- ✅ **Error recovery** - Never retries in a tight loop: waits the refresh delay after an error, and pauses 1 hour after connection resets, 3 errors or 3 empty date lists in a row
 - ✅ **Secure credentials** - Uses environment variables for sensitive data
 
 ## Testing

@@ -5,6 +5,7 @@ import { Response } from 'node-fetch';
 import { Bot, nextMaxDate } from '../src/lib/bot.js';
 import { VisaHttpClient } from '../src/lib/client.js';
 import { parseWeekdays } from '../src/lib/config.js';
+import { botCommand } from '../src/commands/bot.js';
 
 const config = { scheduleId: '1', facilityId: '56', ascFacilityId: '60', countryCode: 'br' };
 const APPLIED = 'Consular Appointment: 10 November, 2026, 08:30 São Paulo - SP local time';
@@ -244,4 +245,58 @@ test('never posts when the reschedule form is not reached', async () => {
   const ok = await client.book({}, '9', '56', '2026-11-10', '08:30', { facilityId: '60', date: '2026-10-27', time: '07:15' });
   assert.equal(ok, false);
   assert.equal(calls.post, null);
+});
+
+test('a response without a session cookie fails with a clear error', () => {
+  const client = new VisaHttpClient('br', 'e', 'p');
+  assert.throws(() => client._extractRelevantCookies(new Response('<html>busy</html>')), /no session cookie/);
+  assert.throws(() => client._extractRelevantCookies(new Response('x', { headers: { 'set-cookie': 'other=1' } })), /no session cookie/);
+});
+
+// Runs the real loop with login/date lookups stubbed and every sleep recorded instead of waited
+function runLoop(t, { initialize, checkAvailableDates }) {
+  for (const [k, v] of Object.entries({ EMAIL: 'e', PASSWORD: 'p', SCHEDULE_ID: '1', FACILITY_ID: '56', COUNTRY_CODE: 'br' })) {
+    process.env[k] ??= v;
+  }
+  process.env.REFRESH_DELAY = '60';
+  const sleeps = [];
+  t.mock.method(globalThis, 'setTimeout', (fn, ms) => { sleeps.push(ms / 1000); setImmediate(fn); });
+
+  let finish;
+  const done = new Promise(resolve => { finish = resolve; });
+  // Hang forever once the scenario is over, so the loop stops without exiting the test process
+  const stop = () => { finish(); return new Promise(() => {}); };
+  t.mock.method(Bot.prototype, 'initialize', () => initialize(stop));
+  if (checkAvailableDates) t.mock.method(Bot.prototype, 'checkAvailableDates', checkAvailableDates);
+
+  botCommand({ current: '2027-03-04', max: '2099-12-31' });
+  return done.then(() => sleeps);
+}
+
+test('errors never retry in a tight loop: wait the refresh delay, pause 1 h from the 3rd failure in a row', async (t) => {
+  let logins = 0;
+  const sleeps = await runLoop(t, {
+    initialize: async (stop) => {
+      if (++logins > 4) return stop();
+      throw new TypeError("Cannot read properties of null (reading 'split')");
+    }
+  });
+  assert.deepEqual(sleeps, [60, 60, 3600, 3600]);
+});
+
+test('a successful check resets the failure count', async (t) => {
+  let logins = 0, checks = 0;
+  const sleeps = await runLoop(t, {
+    initialize: async (stop) => {
+      logins++;
+      if (logins <= 2) throw new Error('no session cookie');
+      return logins === 3 ? {} : stop();
+    },
+    checkAvailableDates: async () => {
+      if (++checks === 1) return [];
+      throw new SyntaxError('Unexpected token \'<\', "<!DOCTYPE "... is not valid JSON');
+    }
+  });
+  // 2 failures, a good check (normal 60 s delay), then the next failure counts from 1 again
+  assert.deepEqual(sleeps, [60, 60, 60, 60]);
 });
