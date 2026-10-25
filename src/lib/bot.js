@@ -28,7 +28,7 @@ export class Bot {
     this.config = config;
     this.dryRun = options.dryRun || false;
     this.client = new VisaHttpClient(this.config.countryCode, this.config.email, this.config.password);
-    // Consecutive empty date lists: the site's usual sign of rate limiting
+    // Consecutive empty date lists: the daily window without dates, or rate limiting
     this.emptyStreak = 0;
   }
 
