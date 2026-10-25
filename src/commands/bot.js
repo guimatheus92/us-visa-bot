@@ -4,6 +4,7 @@ import { log, sleep, isSocketHangupError } from '../lib/utils.js';
 
 const COOLDOWN = 3600; // 1 hour in seconds
 const EMPTY_LIST_LIMIT = 3; // consecutive empty date lists before pausing like a connection reset
+const MAX_FAILURES = 3; // consecutive errors before pausing like a connection reset
 
 export async function botCommand(options) {
   const config = getConfig();
@@ -59,6 +60,11 @@ export async function botCommand(options) {
         maxDate
       );
 
+      // The site answered: earlier errors no longer count toward a pause
+      if (options.failures) {
+        options = { ...options, failures: 0 };
+      }
+
       // Nothing to see while the list stays empty (daily window or rate limit); pause, then log in again
       if (bot.emptyStreak >= EMPTY_LIST_LIMIT) {
         log(`${bot.emptyStreak} empty date lists in a row (daily window or rate limit). Trying again after ${COOLDOWN} seconds...`);
@@ -94,11 +100,19 @@ export async function botCommand(options) {
       await sleep(config.refreshDelay);
     }
   } catch (err) {
+    // Never retry right away: an error page once made the bot log in ~100 times in 15 seconds
+    const failures = (options.failures || 0) + 1;
+    options = { ...options, failures };
+
     if (isSocketHangupError(err)) {
       log(`Socket hangup error: ${err.message}. Trying again after ${COOLDOWN} seconds...`);
       await sleep(COOLDOWN);
+    } else if (failures >= MAX_FAILURES) {
+      log(`Session/authentication error: ${err.message}. ${failures} failures in a row, trying again after ${COOLDOWN} seconds...`);
+      await sleep(COOLDOWN);
     } else {
-      log(`Session/authentication error: ${err.message}. Retrying immediately...`);
+      log(`Session/authentication error: ${err.message}. Retrying after ${config.refreshDelay} seconds...`);
+      await sleep(config.refreshDelay);
     }
     return botCommand(options);
   }
