@@ -70,7 +70,7 @@ See [.env.example](.env.example) for a commented template.
 | `MAX_DATE` | Latest acceptable interview date (YYYY-MM-DD) | Optional. See [Limited reschedule attempts](#limited-reschedule-attempts). The `--max` flag overrides it |
 | `CONSULATE_WEEKDAYS` | Weekdays you can attend the interview | Optional. Comma-separated `mon,tue,wed,thu,fri,sat,sun` (case-insensitive), or `all`. Defaults to `all`. Example: `mon,wed` |
 | `ASC_WEEKDAYS` | Weekdays you can attend the ASC appointment | Optional, same format as `CONSULATE_WEEKDAYS`. Defaults to `all` |
-| `REFRESH_DELAY` | Seconds between checks | Optional, defaults to 3 seconds. Short delays get the account soft-banned sooner, see [Rate Limiting](#rate-limiting-soft-ban) |
+| `REFRESH_DELAY` | Seconds between checks | Optional, defaults to 3 seconds. Short delays make the site reset connections more often; 60 worked well, see [Empty Date Lists and Rate Limiting](#empty-date-lists-and-rate-limiting) |
 
 ### Finding Your Facility IDs
 
@@ -126,7 +126,7 @@ npm start -- --help
 
 ### Saving the Log
 
-The bot only prints to the terminal. To keep the whole run (useful to see, for example, when the site started rate limiting), also write it to `bot.log`:
+The bot only prints to the terminal. To keep the whole run (useful to see, for example, when the date list emptied or connections were reset), also write it to `bot.log`:
 
 ```powershell
 # Windows PowerShell
@@ -150,18 +150,30 @@ With a max date (`MAX_DATE` or `--max`):
 - The bot stops when the max date has passed, because nothing else can be found.
 - If the site does not confirm a submitted booking, the bot stops instead of retrying, so an unknown state never costs a second attempt. Check the site before restarting.
 
-## Rate Limiting (Soft Ban)
+## Empty Date Lists and Rate Limiting
 
-The site has no published rate limit, but too many requests or logins in a short time get the account temporarily throttled ("soft ban"):
+The site documents neither of the two things below. What follows comes from our logs (Brazil, October 2026) and from community reports.
 
-- **Symptom:** the date list comes back empty (`no dates available`) even though dates existed minutes before. In the browser, the reschedule page shows a red message saying there are no appointments at the selected location *or the system is busy* (in Portuguese: "Não há agendamentos disponíveis no local selecionado ou o sistema está ocupado"). The account itself is not locked, and you can still log in.
-- **Cause:** every run of the bot (including `--dry-run`) and every debugging script logs in again, and manual page refreshes also count. In our case, about 8 logins within 10 minutes (several dry runs and debugging scripts) triggered it right away. Polling alone also adds up: community reports mention empty lists after ~48 requests, or after ~3 hours of polling every 60 seconds. In one of our runs at a ~30 second interval, the site started resetting connections (`ECONNRESET`) after about 2 hours of polling, and after the third reset the date list came back empty.
-- **Duration:** there is no official policy. Community reports consistently mention **about 5 hours**. Some tools simply sleep 5 hours when the list is empty, others retry after 1 hour.
-- **What the bot does:** after a connection reset, or after 3 empty date lists in a row, it pauses for 1 hour and then logs in again, instead of polling through the ban (which returns nothing and may extend it). The site's session also expires after about 1 hour; the bot logs in again on its own.
-- **What to do:** leave the bot running and let it pause. Do not keep refreshing the site or restarting the bot, since each restart is a new login.
-- **Prevention:** do not run several dry runs, restarts or debugging scripts back to back; test once and leave it running. Prefer a longer `REFRESH_DELAY`: a steady, slower poll over the whole day catches more cancellations than a fast burst followed by hours of soft ban.
+### Daily window without dates
 
-Sources (community reports, not official): [gist comments on ban length and intervals](https://gist.github.com/Svision/04202d93fb32d14f00ac746879820722), [uxDaniel/visa_rescheduler#76](https://github.com/uxDaniel/visa_rescheduler/issues/76), [zangjiucheng/us_visa_scheduler](https://github.com/zangjiucheng/us_visa_scheduler).
+For anyone who already has an appointment, the site stops offering reschedule dates during part of the day:
+
+- **Symptom:** the date list comes back empty (`no dates available`). In the browser, the reschedule page shows a red message saying there are no appointments at the selected location *or the system is busy* (in Portuguese: "Não há agendamentos disponíveis no local selecionado ou o sistema está ocupado"). Logging in still works.
+- **When:** in Brazil, every day from about **06:00 to about 15:00 Brasília time** (09:00 to 18:00 UTC), regardless of how many requests were made.
+  - On two consecutive days, the list emptied at 06:00 sharp.
+  - In the ~880 checks made overnight before that, the list was never empty.
+  - Canada and Mexico have similar fixed daytime windows ([AlertMeASAP](https://www.alertmeasap.com/blog/ais-system-busy-explained/), [LuckyBee](https://luckybee.app/en/blogs/ais-system-busy-explained)). Other posts may differ.
+- **Consequence:** reschedule dates, including cancellations, only show up outside the window. The two cancellations we saw appeared at 01:35 and 03:40 Brasília time.
+
+### Rate limiting
+
+Polling too fast makes the site reset connections (`ECONNRESET`). In our runs this happened about every 2 hours at a ~30 second interval, and about once in 7 hours at 60 seconds. Community reports also mention temporary blocks lasting hours after many requests ([gist comments](https://gist.github.com/Svision/04202d93fb32d14f00ac746879820722), [uxDaniel/visa_rescheduler#76](https://github.com/uxDaniel/visa_rescheduler/issues/76), [zangjiucheng/us_visa_scheduler](https://github.com/zangjiucheng/us_visa_scheduler)).
+
+### What the bot does, and what to do
+
+- **What the bot does:** after a connection reset, or after 3 empty date lists in a row, it pauses for 1 hour and then logs in again. During the daily window, this means one short check per hour instead of polling all day. The site's session also expires after about 1 hour; the bot logs in again on its own.
+- **What to do:** leave the bot running. It picks up again when dates come back. Avoid restarting it or refreshing the site repeatedly, since each restart is a new login.
+- **Interval:** a 60-second `REFRESH_DELAY` avoided most connection resets in our runs. Test once and leave it running, rather than doing several dry runs or restarts back to back.
 
 ## How It Behaves
 

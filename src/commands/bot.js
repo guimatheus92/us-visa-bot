@@ -59,9 +59,9 @@ export async function botCommand(options) {
         maxDate
       );
 
-      // Polling through a rate limit only extends it; pause, then log in again
+      // Nothing to see while the list stays empty (daily window or rate limit); pause, then log in again
       if (bot.emptyStreak >= EMPTY_LIST_LIMIT) {
-        log(`${bot.emptyStreak} empty date lists in a row, probably rate limited. Trying again after ${COOLDOWN} seconds...`);
+        log(`${bot.emptyStreak} empty date lists in a row (daily window or rate limit). Trying again after ${COOLDOWN} seconds...`);
         await sleep(COOLDOWN);
         return botCommand(options);
       }
