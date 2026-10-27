@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { Response } from 'node-fetch';
 import { Bot, nextMaxDate } from '../src/lib/bot.js';
 import { VisaHttpClient } from '../src/lib/client.js';
-import { parseWeekdays } from '../src/lib/config.js';
+import { parseWeekdays, parseBoolean, parsePositiveInt } from '../src/lib/config.js';
 import { botCommand } from '../src/commands/bot.js';
 
 const config = { scheduleId: '1', facilityId: '56', ascFacilityId: '60', countryCode: 'br' };
@@ -254,28 +254,33 @@ test('a response without a session cookie fails with a clear error', () => {
 });
 
 // Runs the real loop with login/date lookups stubbed and every sleep recorded instead of waited
-function runLoop(t, { initialize, checkAvailableDates }) {
+// Dates far in the future keep the loop's "max date has passed" check out of the way
+function runLoop(t, { initialize, checkAvailableDates, bookEarliest, onExit, env = {} }) {
   for (const [k, v] of Object.entries({ EMAIL: 'e', PASSWORD: 'p', SCHEDULE_ID: '1', FACILITY_ID: '56', COUNTRY_CODE: 'br' })) {
     process.env[k] ??= v;
   }
-  process.env.REFRESH_DELAY = '60';
+  // Deterministic regardless of the local .env
+  Object.assign(process.env, { REFRESH_DELAY: '60', STOP_AFTER_BOOKING: '', MAX_BOOKINGS: '' }, env);
   const sleeps = [];
+  const exits = [];
   t.mock.method(globalThis, 'setTimeout', (fn, ms) => { sleeps.push(ms / 1000); setImmediate(fn); });
+  t.mock.method(process, 'exit', (code) => { exits.push(code); onExit?.(code); });
 
   let finish;
   const done = new Promise(resolve => { finish = resolve; });
   // Hang forever once the scenario is over, so the loop stops without exiting the test process
   const stop = () => { finish(); return new Promise(() => {}); };
   t.mock.method(Bot.prototype, 'initialize', () => initialize(stop));
-  if (checkAvailableDates) t.mock.method(Bot.prototype, 'checkAvailableDates', checkAvailableDates);
+  if (checkAvailableDates) t.mock.method(Bot.prototype, 'checkAvailableDates', () => checkAvailableDates(stop));
+  if (bookEarliest) t.mock.method(Bot.prototype, 'bookEarliest', bookEarliest);
 
-  botCommand({ current: '2027-03-04', max: '2099-12-31' });
-  return done.then(() => sleeps);
+  botCommand({ current: '2099-12-31', max: '2099-12-31' });
+  return done.then(() => ({ sleeps, exits }));
 }
 
 test('errors never retry in a tight loop: wait the refresh delay, pause 1 h from the 3rd failure in a row', async (t) => {
   let logins = 0;
-  const sleeps = await runLoop(t, {
+  const { sleeps } = await runLoop(t, {
     initialize: async (stop) => {
       if (++logins > 4) return stop();
       throw new TypeError("Cannot read properties of null (reading 'split')");
@@ -286,7 +291,7 @@ test('errors never retry in a tight loop: wait the refresh delay, pause 1 h from
 
 test('a successful check resets the failure count', async (t) => {
   let logins = 0, checks = 0;
-  const sleeps = await runLoop(t, {
+  const { sleeps } = await runLoop(t, {
     initialize: async (stop) => {
       logins++;
       if (logins <= 2) throw new Error('no session cookie');
@@ -299,4 +304,58 @@ test('a successful check resets the failure count', async (t) => {
   });
   // 2 failures, a good check (normal 60 s delay), then the next failure counts from 1 again
   assert.deepEqual(sleeps, [60, 60, 60, 60]);
+});
+
+test('parses STOP_AFTER_BOOKING and MAX_BOOKINGS, rejecting typos', (t) => {
+  assert.equal(parseBoolean('true', 'X'), true);
+  assert.equal(parseBoolean(' YES ', 'X'), true);
+  assert.equal(parseBoolean('1', 'X'), true);
+  assert.equal(parseBoolean('false', 'X'), false);
+  assert.equal(parseBoolean('', 'X'), false);
+  assert.equal(parseBoolean(undefined, 'X'), false);
+  assert.equal(parsePositiveInt('2', 'X'), 2);
+  assert.equal(parsePositiveInt('', 'X'), null);
+  assert.equal(parsePositiveInt(undefined, 'X'), null);
+  stubExit(t);
+  assert.throws(() => parseBoolean('ture', 'X'), /exit 1/);
+  assert.throws(() => parsePositiveInt('0', 'X'), /exit 1/);
+  assert.throws(() => parsePositiveInt('two', 'X'), /exit 1/);
+});
+
+// Each check offers one date; every booking succeeds; the 4th check ends the scenario
+function bookingScenario({ failAfterFirstBooking = false } = {}) {
+  let checks = 0, logins = 0;
+  const booked = [];
+  return {
+    booked,
+    initialize: async () => { logins++; return {}; },
+    checkAvailableDates: async (stop) => {
+      checks++;
+      if (failAfterFirstBooking && checks === 2) throw new Error('Your session expired');
+      return checks >= 4 ? stop() : [`2099-0${7 - checks}-15`];
+    },
+    bookEarliest: async (h, dates) => { booked.push(dates[0]); return dates[0]; }
+  };
+}
+
+test('STOP_AFTER_BOOKING stops right after the first confirmed booking', async (t) => {
+  const s = bookingScenario();
+  const { exits } = await runLoop(t, { ...s, onExit: () => { s.atExit ??= s.booked.length; }, env: { STOP_AFTER_BOOKING: 'true' } });
+  assert.equal(exits[0], 0);
+  assert.equal(s.atExit, 1);
+});
+
+test('MAX_BOOKINGS counts bookings across restarts and stops at the limit', async (t) => {
+  const s = bookingScenario({ failAfterFirstBooking: true });
+  const { exits } = await runLoop(t, { ...s, onExit: () => { s.atExit ??= s.booked.length; }, env: { MAX_BOOKINGS: '2' } });
+  // booking 1, a session error restarts the loop, booking 2 -> stop
+  assert.equal(exits[0], 0);
+  assert.equal(s.atExit, 2);
+});
+
+test('without STOP_AFTER_BOOKING or MAX_BOOKINGS the bot keeps going after a booking', async (t) => {
+  const s = bookingScenario();
+  const { exits } = await runLoop(t, s);
+  assert.equal(s.booked.length, 3);
+  assert.deepEqual(exits, []);
 });

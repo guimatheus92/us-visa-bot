@@ -20,6 +20,26 @@ export function parseWeekdays(value, name) {
   return days.map(d => WEEKDAYS.indexOf(d));
 }
 
+// A typo must not silently disable a safety limit, so anything unexpected stops the bot
+export function parseBoolean(value, name) {
+  const v = (value || '').trim().toLowerCase();
+  if (['', 'false', '0', 'no'].includes(v)) return false;
+  if (['true', '1', 'yes'].includes(v)) return true;
+
+  console.error(`${name} must be true or false; got "${value}"`);
+  process.exit(1);
+}
+
+// Unset -> null (no limit)
+export function parsePositiveInt(value, name) {
+  const v = (value || '').trim();
+  if (!v) return null;
+  if (/^[1-9]\d*$/.test(v)) return Number(v);
+
+  console.error(`${name} must be a positive whole number; got "${value}"`);
+  process.exit(1);
+}
+
 export function getConfig() {
   const config = {
     email: process.env.EMAIL,
@@ -31,6 +51,8 @@ export function getConfig() {
     maxDate: process.env.MAX_DATE,
     consulateWeekdays: parseWeekdays(process.env.CONSULATE_WEEKDAYS, 'CONSULATE_WEEKDAYS'),
     ascWeekdays: parseWeekdays(process.env.ASC_WEEKDAYS, 'ASC_WEEKDAYS'),
+    stopAfterBooking: parseBoolean(process.env.STOP_AFTER_BOOKING, 'STOP_AFTER_BOOKING'),
+    maxBookings: parsePositiveInt(process.env.MAX_BOOKINGS, 'MAX_BOOKINGS'),
     refreshDelay: Number(process.env.REFRESH_DELAY || 3)
   };
 
