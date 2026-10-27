@@ -52,6 +52,8 @@ ASC_FACILITY_ID=your_asc_facility_id   # only in countries with an ASC appointme
 MAX_DATE=2026-11-30                    # optional
 CONSULATE_WEEKDAYS=mon,wed             # optional, defaults to all
 ASC_WEEKDAYS=all                       # optional, defaults to all
+STOP_AFTER_BOOKING=true                # optional, defaults to false
+MAX_BOOKINGS=1                         # optional, defaults to no limit
 REFRESH_DELAY=3
 ```
 
@@ -70,6 +72,8 @@ See [.env.example](.env.example) for a commented template.
 | `MAX_DATE` | Latest acceptable interview date (YYYY-MM-DD) | Optional. See [Limited reschedule attempts](#limited-reschedule-attempts). The `--max` flag overrides it |
 | `CONSULATE_WEEKDAYS` | Weekdays you can attend the interview | Optional. Comma-separated `mon,tue,wed,thu,fri,sat,sun` (case-insensitive), or `all`. Defaults to `all`. Example: `mon,wed` |
 | `ASC_WEEKDAYS` | Weekdays you can attend the ASC appointment | Optional, same format as `CONSULATE_WEEKDAYS`. Defaults to `all` |
+| `STOP_AFTER_BOOKING` | Stop after the first confirmed booking | Optional, `true` or `false` (default). Same as `MAX_BOOKINGS=1`. See [Limited reschedule attempts](#limited-reschedule-attempts) |
+| `MAX_BOOKINGS` | Maximum confirmed bookings before the bot stops | Optional positive whole number; no limit by default. Counted across the bot's own restarts after errors and pauses. Restarting it by hand starts from zero |
 | `REFRESH_DELAY` | Seconds between checks | Optional, defaults to 3 seconds. Short delays make the site reset connections more often; 60 worked well, see [Empty Date Lists and Rate Limiting](#empty-date-lists-and-rate-limiting) |
 
 ### Finding Your Facility IDs
@@ -149,6 +153,7 @@ With a max date (`MAX_DATE` or `--max`):
 - After each booking, the max date steps down to **the end of the previous month**, so another attempt is only spent to gain at least a whole month. Example: with `--max 2026-11-30`, booking Nov 20 makes only October count; booking in October makes September the limit, which is already in the past, so the bot stops.
 - The bot stops when the max date has passed, because nothing else can be found.
 - If the site does not confirm a submitted booking, the bot stops instead of retrying, so an unknown state never costs a second attempt. Check the site before restarting.
+- After a confirmed booking, the bot keeps looking with the lowered max date unless `STOP_AFTER_BOOKING=true` or `MAX_BOOKINGS` says otherwise. With a far max date, the monthly steps can add up to several bookings (for example December, then November, then October) and use every attempt, and the site locks the appointment once the limit is reached. Set `MAX_BOOKINGS` (or `STOP_AFTER_BOOKING=true`) to cap them. The count starts from zero when you restart the bot by hand, so update `-c` and the limit before restarting.
 
 ## Empty Date Lists and Rate Limiting
 

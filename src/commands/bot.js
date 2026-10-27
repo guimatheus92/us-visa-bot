@@ -32,6 +32,13 @@ export async function botCommand(options) {
     log(`Weekdays: interview ${days(config.consulateWeekdays)}; ASC ${days(config.ascWeekdays)}`);
   }
 
+  // STOP_AFTER_BOOKING is MAX_BOOKINGS=1; whichever limit comes first wins
+  const bookingLimit = config.stopAfterBooking ? 1 : config.maxBookings;
+
+  if (bookingLimit) {
+    log(`Stops after ${bookingLimit} confirmed booking(s) (${options.bookings || 0} so far)`);
+  }
+
   if (options.dryRun) {
     log(`[DRY RUN MODE] Bot will only log what would be booked without actually booking`);
   }
@@ -84,11 +91,20 @@ export async function botCommand(options) {
             log(`Rescheduled to ${bookedDate}. From now on only dates up to ${maxDate} count.`);
           }
 
+          // options also carries the count across the retry restarts, so a pause cannot reset the limit
+          const bookings = (options.bookings || 0) + 1;
+
           options = {
             ...options,
             current: currentBookedDate,
-            max: maxDate
+            max: maxDate,
+            bookings
           };
+
+          if (bookingLimit && bookings >= bookingLimit) {
+            log(`Booking limit reached (${bookings} of ${bookingLimit}, STOP_AFTER_BOOKING / MAX_BOOKINGS). Stopping.`);
+            process.exit(0);
+          }
 
           if (targetDate && bookedDate <= targetDate) {
             log(`Target date reached! Successfully booked appointment on ${bookedDate}`);
